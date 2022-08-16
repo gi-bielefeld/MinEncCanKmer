@@ -36,5 +36,6 @@ To switch to standard 2-bit encoding, (uncomment) the following lines:
 
 ## License
 
-* Licensed under the [GNU general public license](https://gitlab.ub.uni-bielefeld.de/gi/sans/blob/master/LICENSE).
+* fasta.c and fasta.h are borrowed from [FragGeneScan-Plus](https://github.com/hallamlab/FragGeneScanPlus).
+* MPHFcan is licensed under the [GNU general public license](https://gitlab.ub.uni-bielefeld.de/gi/sans/blob/master/LICENSE).
 
