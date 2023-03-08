@@ -213,7 +213,11 @@ int process_string(char* s, int k, int* bins, int b){
 		} else { // single character in the middle
 			kmerhash = initialhashed(kmer,offset,l);
 			// set the bits accordingly
-			if((*kmer)&posmasks[offset+l+1]){ kmerhash|=~posmasks[offset+l+2];} //rc
+			// A=00 -> 0
+			// C=01 -> 1
+			// G=10 -> 1
+			// T=11 -> 0
+			if((*kmer)&posmasks[offset+l+1] && !(*kmer)&posmasks[offset+l+2]){ kmerhash|=posmasks[offset+l+2];} //rc
 			if((*kmer)&posmasks[offset+l+2]){ kmerhash|=posmasks[offset+l+2];}
 		} 
 		
