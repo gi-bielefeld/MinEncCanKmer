@@ -1,6 +1,6 @@
-# MPHFcan
+# MinEncCanKmer
 
-Minimal perfect hashing of canonical k-mers
+Minimal encoding of canonical k-mers
 
 ## Compilation
 
@@ -35,7 +35,7 @@ To switch to standard 2-bit encoding, (uncomment) the following lines:
 
 ## General alphabets
 
-For encoding canonical k-mers on general (non-DNA) alphabets, Python scripts are provided in the according subfolder, where `mphf.py` outputs the encoding of all k-mers for a given alphabet size, and `mphf_rc.py` encodes considering reverse complementation.
+For encoding canonical k-mers on general (non-DNA) alphabets, Python scripts are provided in the according subfolder, where `minenc.py` outputs the encoding of all k-mers for a given alphabet size, and `minenc_rc.py` encodes considering reverse complementation.
 
 
 ## License
