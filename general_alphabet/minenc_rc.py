@@ -86,6 +86,7 @@ def intcode(code,i):
 # Usage / paramters
 if len(sys.argv)<3:
     eprint("Usage: mphf_rc.py <sigma> <k>")
+    eprint("<sigma> must be even")
     eprint("Output: enc(x) x for all k-mers")
     sys.exit(1)
 
@@ -95,7 +96,9 @@ sigma=int(sys.argv[1])
 k=int(sys.argv[2])
 
 # even alphabets only
-if sigma%2==1: exit(1)
+if sigma%2==1:
+    eprint("<sigma> must be even")
+    exit(1)
 
 # construct a list of all k-mers
 l=[[i] for i in range(0,sigma)]
