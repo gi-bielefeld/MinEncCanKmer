@@ -43,14 +43,14 @@ def code(x):
 		# left character = 0
 		code.insert(i,0)
 		# right character by rank
-		code.insert(i+1,int(x[k-i-1]))
+		code.insert(i+1,compl(x[k-i-1]))
 		# continue with next pair
 		i+=1
 		
 	# specifying case
 	if i==(k-1)/2: # single character left
 		if compl(x[i])<x[i]: return ([],i) # not cononical
-		code.insert(i,int(x[i]))
+		code.insert(i,compl(x[i]))
 
 	elif i<k//2: # specifying pair
 		code.insert(i,spec_l(x[i],compl(x[k-i-1])))
