@@ -77,7 +77,7 @@ def intcode(code,i):
 	c-=missing(i+1)
 	
 	# subtract gap in code due to specifying middle position
-	if k%2==1 and c>=sigma**(k//2+1): c -= sigma//2*sigma**(k//2) 
+	if k%2==1: c-=(sigma**((k+1)//2))//2
 	
 	return c
 
