@@ -132,7 +132,7 @@ int process_string(char* s, int k, int* bins, int b){
 	}
 	
 
-	// K:
+	// R:
 	// * 0 A..A -> 0110
 	// * 1 A..C -> 0101
 	// * 2 A..G -> 0100
