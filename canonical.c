@@ -132,6 +132,7 @@ int process_string(char* s, int k, int* bins, int b){
 	}
 	
 
+	// K:
 	// * 0 A..A -> 0110
 	// * 1 A..C -> 0101
 	// * 2 A..G -> 0100
@@ -160,6 +161,10 @@ int process_string(char* s, int k, int* bins, int b){
 		// pick a precomputed mask consisting of l trailing 1s and 0s else
 		// do and AND of that mask and the original k-mer to get the new right part
 		u_int64_t right = (*kmer) & zeromasks[offset+2*k-l]; //l trailing ones
+		
+		// complement/invert the right part by xor with zeromask
+		// /!\ TO SAVE COMPUTATION TIME, THIS STEP CAN BE SKIPPED. The resulting encodung will be different bbut still a coorect minimal encoding.
+		right = right ^ zeromasks[offset+2*k-l];
 
 		// no remainder left?
 		if((l+2)>=k){ return(right); }
