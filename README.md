@@ -41,5 +41,5 @@ For encoding canonical k-mers on general (non-DNA) alphabets, Python scripts are
 ## License
 
 * fasta.c and fasta.h are borrowed from [FragGeneScan-Plus](https://github.com/hallamlab/FragGeneScanPlus).
-* MinEncCanKmer is licensed under the [GNU general public license](https://gitlab.ub.uni-bielefeld.de/gi/MinEncCanKmer/blob/master/LICENSE).
+* MinEncCanKmer is licensed under the [GNU general public license](https://gitlab.ub.uni-bielefeld.de/gi/MinEncCanKmer/-/blob/main/LICENSE).
 
