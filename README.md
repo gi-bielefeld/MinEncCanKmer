@@ -26,7 +26,7 @@ Output: distribution of k-mers to buckets
 
 ## 2-bit encoding
 
-To switch to standard 2-bit encoding, (uncomment) the following lines:
+To switch to standard 2-bit encoding, (un)comment the following lines:
 
 ```
 // process_string(seq,k,threads,t)
