@@ -37,6 +37,9 @@ To switch to standard 2-bit encoding, (uncomment) the following lines:
 
 For encoding canonical k-mers on general (non-DNA) alphabets, Python scripts are provided in the according subfolder, where `minenc.py` outputs the encoding of all k-mers for a given alphabet size, and `minenc_rc.py` encodes considering reverse complementation.
 
+## Citation
+
+Please cite: Wittler R. General encoding of canonical k-mers. Peer Community Journal. 2023;3: e87. https://doi.org/10.24072/pcjournal.323
 
 ## License
 
