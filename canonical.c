@@ -1,10 +1,11 @@
 #include <ctype.h>
-#include <fasta.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "fasta.h"
 
 // print a k-mer in binary format
 void printkmer(u_int64_t u)
@@ -256,10 +257,10 @@ int process_string(char* s, int k, int* bins, int b)
             // C=01 -> 1
             // G=10 -> 1
             // T=11 -> 0
-            if ((*kmer) & posmasks[offset + l + 1] && !(*kmer) & posmasks[offset + l + 2]) {
+            if (((*kmer) & posmasks[offset + l + 1]) && !((*kmer) & posmasks[offset + l + 2])) {
                 kmerhash |= posmasks[offset + l + 2];
-            } //rc
-            if ((*kmer) & posmasks[offset + l + 2]) {
+            }
+            if (!((*kmer) & posmasks[offset + l + 1]) && ((*kmer) & posmasks[offset + l + 2])) {
                 kmerhash |= posmasks[offset + l + 2];
             }
         }
