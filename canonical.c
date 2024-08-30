@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "fasta.h"
 
@@ -27,6 +28,108 @@ void printkmer(u_int64_t u)
     }
 
     printf("\n");
+}
+
+/**
+ * @brief Calculate the power `base^exp` for positive integer values.
+ *
+ * This is considerably faster than pow(), and does not have any rounding or converion issues.
+ * However, it overflows quite easily. The function does not check whether the desired power
+ * actually fits within `u_int64_t`.
+ */
+u_int64_t int_pow(u_int64_t base, u_int8_t exp)
+{
+    // Using Exponentiation by squaring, see
+    // http://stackoverflow.com/a/101613/4184258
+    u_int64_t result = 1;
+    while (exp) {
+        if (exp & 1) {
+            result *= base;
+        }
+        exp >>= 1;
+        base *= base;
+    }
+    return result;
+}
+
+/**
+ * @brief Compute the total number of possible k-mers for a given @p k.
+ *
+ * We here use an alphabet size of 4, for typical nucleotide k-mers over the alphabet `ACGT`.
+ * For instance, with `k==6`, this yields `4*4*4*4*4*4 == 4096` possible k-mers of that size.
+ */
+u_int64_t number_of_kmers(u_int8_t k)
+{
+    u_int64_t n = 1;
+    for (u_int64_t i = 0; i < k; ++i) {
+        n *= 4;
+    }
+    return n;
+}
+
+/**
+ * @brief Compute the number of canonical k-mers for a given k and nucleotide alphabet.
+ */
+u_int64_t number_of_canonical_kmers(u_int8_t k)
+{
+    // We need distinct approaches for even and odd values, due to palindromes.
+    // It might be easier to just have a hard coded table... but this way is more approachable.
+    if (k == 0 || k > 32) {
+        fprintf(stderr, "ERROR: Can only compute minimal encoding size for k in [1,32].");
+    } else if (k % 2 == 0) {
+        // Even numbers, need to add palindromes.
+        // We use base 2 here, and instead of dividing the result by 2 in the end, we subtract 1
+        // from the exponent, in order to avoid overflowing for the case k=32.
+        // The original (overflowing) equation from the paper is commented out below for reference.
+        return int_pow(2, 2 * k - 1) + int_pow(2, 2 * k / 2 - 1);
+        // return ( int_pow( 4, k ) + int_pow( 4, k / 2 )) / 2;
+    } else {
+        // Odd numbers. No overflow for the valid range.
+        return int_pow(4, k) / 2;
+    }
+    return 0;
+}
+
+/**
+ * @brief Compute the number of palindromes (under reverse complmenet) that exist
+ * for a given @p k and nucleotide alphabet.
+ *
+ * This is `0` for odd values of @p k, and `4^(k/2)` for even values of @p k.
+ */
+u_int64_t number_of_palindromes(u_int8_t k)
+{
+    // Edge and special cases.
+    if (k == 0 || k > 32) {
+        fprintf(stderr, "ERROR: Can only compute minimal encoding size for k in [1,32].");
+    } else if (k % 2 != 0) {
+        // No palindromes for odd k
+        return 0;
+    }
+    return int_pow(4, k / 2);
+}
+
+/**
+ * @brief Compute the reverse complement of a give @p kmer.
+ */
+u_int64_t reverse_complement(u_int64_t kmer, u_int8_t k)
+{
+    // Adapted from Kraken2 at https://github.com/DerrickWood/kraken2/blob/master/src/mmscanner.cc
+    // which itself adapted this for 64-bit DNA use from public domain code at
+    // https://graphics.stanford.edu/~seander/bithacks.html#ReverseParallel
+
+    // Reverse bits (leaving bit pairs intact, as those represent nucleotides):
+    // Swap consecutive pairs, then nibbles, then bytes, then byte pairs, then halves of 64-bit word
+    u_int64_t value = kmer;
+    value = ((value & 0xCCCCCCCCCCCCCCCCUL) >> 2) | ((value & 0x3333333333333333UL) << 2);
+    value = ((value & 0xF0F0F0F0F0F0F0F0UL) >> 4) | ((value & 0x0F0F0F0F0F0F0F0FUL) << 4);
+    value = ((value & 0xFF00FF00FF00FF00UL) >> 8) | ((value & 0x00FF00FF00FF00FFUL) << 8);
+    value = ((value & 0xFFFF0000FFFF0000UL) >> 16) | ((value & 0x0000FFFF0000FFFFUL) << 16);
+    value = (value >> 32) | (value << 32);
+
+    // Finally, complement, and shift to correct position, removing the invalid lower bits.
+    int const bitwidth = sizeof(u_int64_t) * 8;
+    value = ((~value) >> (bitwidth - 2 * k));
+    return value;
 }
 
 // =================================================================================================
@@ -306,7 +409,6 @@ int process_string(char* s, int k, int* bins, int b)
         } else {
             bins[p]++;
         }
-
     }
 
     return 0;
@@ -383,7 +485,7 @@ int process_string_std(char* s, int k, int* bins, int b)
 
             // assign to bin
             u_int64_t p = b * can / maxrank;
-            // 			int p = can % t ;
+            // int p = can % t ;
             bins[p]++;
         }
     }
@@ -392,11 +494,167 @@ int process_string_std(char* s, int k, int* bins, int b)
 }
 
 // =================================================================================================
+//     Tests
+// =================================================================================================
+
+// Function to generate a random 64-bit integer
+u_int64_t random_64bit_int()
+{
+    u_int64_t random_number = 0;
+
+    // Combine several calls to rand() to construct a 64-bit integer
+    // rand() is usually a 15-bit random number generator or larger,
+    // so we stack enough of those to get our bits.
+    random_number ^= ((u_int64_t)rand() << 48);
+    random_number ^= ((u_int64_t)rand() << 32);
+    random_number ^= ((u_int64_t)rand() << 16);
+    random_number ^= ((u_int64_t)rand());
+
+    return random_number;
+}
+
+// Simple helper to print an error if the given value is not true.
+// We could use normal assert(), but that could be deactivated if not compiled as debug.
+void test_assert(bool value)
+{
+    if (!value) {
+        perror("Failed test");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// Function to test all kmers up to a given size
+void test_all_small_kmers()
+{
+    Bitmasks bm;
+
+    // Test several different lengths of kmers
+    for (u_int64_t k = 1; k < 12; ++k) {
+        u_int64_t num_canon_kmers = number_of_canonical_kmers(k);
+        u_int64_t num_palindromes = number_of_palindromes(k);
+        initialize_bitmasks(&bm, k);
+
+        // Create an array to count kmers, initialized to 0
+        u_int64_t* counts = (u_int64_t*)calloc(num_canon_kmers, sizeof(u_int64_t));
+        if (counts == NULL) {
+            perror("Failed to allocate memory for counts array");
+            exit(EXIT_FAILURE);
+        }
+
+        // Test all kmers of that length
+        for (u_int64_t i = 0; i < number_of_kmers(k); ++i) {
+            // Create the kmer, by simply using i as the binary coding.
+            // This way, each possilbe kmer will be encountered exactly once.
+            u_int64_t kmer = i;
+            u_int64_t rc = reverse_complement(kmer, k);
+
+            // Get its index from the encoding.
+            u_int64_t index = encode(&bm, kmer, rc);
+
+            // The index needs to match the one of the reverse complement
+            test_assert(index == encode(&bm, rc, kmer));
+
+            // Increment the count of that index, checking that we are in bounds.
+            test_assert(index < num_canon_kmers);
+            ++counts[index];
+        }
+
+        // Test that all bins got the number of kmers that we expect.
+        test_assert(num_canon_kmers == num_canon_kmers); // Counts size is num_canon_kmers
+        u_int64_t cnt = 0;
+        for (u_int64_t i = 0; i < num_canon_kmers; ++i) {
+            // For palindromes: the first 4^(k/2)/2 entries are only set once.
+            if (k % 2 == 0 && i < num_palindromes) {
+                test_assert(counts[i] == 1);
+            } else {
+                test_assert(counts[i] == 2);
+            }
+            cnt += counts[i];
+        }
+        test_assert(cnt == number_of_kmers(k));
+
+        // Free the counts array after use
+        free(counts);
+    }
+}
+
+void test_large_kmers()
+{
+    // Seed the random number generator
+    srand(time(NULL));
+    int k = 32;
+    Bitmasks bm;
+    initialize_bitmasks(&bm, k);
+
+    // Test large sizes of k for the boundaries.
+    // Here, we cannot enumerate all values, so we just test the basic canonical property.
+    for (int i = 0; i < 100000; ++i) {
+        // Make a random kmer
+        u_int64_t kmer = random_64bit_int();
+        u_int64_t rc = reverse_complement(kmer, k);
+
+        // The index needs to match the one of the reverse complement
+        test_assert(encode(&bm, kmer, rc) == encode(&bm, rc, kmer));
+    }
+}
+
+void test_speed(int k)
+{
+    // Seed the random number generator
+    srand(time(NULL));
+    Bitmasks bm;
+    initialize_bitmasks(&bm, k);
+
+    // Define the number of random integers we want to generate
+    const int NUM_RANDOM_INTS = 100000000;
+
+    // Allocate memory for arrays of kmers and their reverse complements.
+    u_int64_t* kmers = (u_int64_t*)malloc(NUM_RANDOM_INTS * sizeof(u_int64_t));
+    u_int64_t* rcs = (u_int64_t*)malloc(NUM_RANDOM_INTS * sizeof(u_int64_t));
+    if (kmers == NULL || rcs == NULL) {
+        perror("Failed to allocate memory for kmers or rcs");
+        exit(EXIT_FAILURE);
+    }
+
+    // Generate random 64-bit integers and store them in the array
+    for (int i = 0; i < NUM_RANDOM_INTS; ++i) {
+        kmers[i] = random_64bit_int();
+        rcs[i] = reverse_complement(kmers[i], k);
+    }
+
+    // Start high-resolution timer
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    // Test that the encoding is the same for the kmer and its rc.
+    // That's our speed test, hence encoding twice the number of kmers of the array.
+    for (int i = 0; i < NUM_RANDOM_INTS; ++i) {
+        test_assert(encode(&bm, kmers[i], rcs[i]) == encode(&bm, rcs[i], kmers[i]));
+    }
+
+    // Calculate the elapsed time in seconds
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double elapsed_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    unsigned long enc_per_sec = 2 * NUM_RANDOM_INTS / elapsed_time;
+    printf("k==%i, time: %fs, enc/s: %lu\n", k, elapsed_time, enc_per_sec);
+
+    // Free the allocated memory
+    free(kmers);
+    free(rcs);
+}
+
+// =================================================================================================
 //     Main
 // =================================================================================================
 
 int main(int argc, char* argv[])
 {
+    // Run the test cases instead of the main processing.
+    test_all_small_kmers();
+    test_large_kmers();
+    test_speed(15);
+    test_speed(16);
+    return 0;
 
     // default values
     int k = 5; // k-mer length
@@ -435,14 +693,12 @@ int main(int argc, char* argv[])
     while (ReadFASTA(ffp, &seq, &name, &L)) {
 
         if (
-
             //***
             //*** distribute canonical k-mers to bins
             //***
 
             process_string(seq, k, bins, b)
-            // 			process_string_std(seq,k,bins,b)
-
+            // process_string_std(seq,k,bins,b)
         ) {
             exit(1);
         }
@@ -458,7 +714,7 @@ int main(int argc, char* argv[])
         printf("%d\n", bins[i]);
         sum += bins[i];
     }
-    //  	printf("\nSUM: %d\n",sum);
+    // printf("\nSUM: %d\n",sum);
 
     return 0;
 }
