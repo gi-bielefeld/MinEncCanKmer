@@ -15,18 +15,17 @@
 // print a k-mer in binary format
 void printkmer(u_int64_t u)
 {
-    // print kmer
-    u_int64_t t = pow(2, 63); // t is the max number that can be represented
-
-    for (t; t > 0; t = t / 2) { // t iterates through powers of 2
-        if (u >= t) { // check if u can be represented by current value of t
-            u -= t;
-            printf("1"); // if so, add a 1
+    for (int i = 0; i < 64; ++i) {
+        if (i > 0 && i % 2 == 0) {
+            printf(" ");
+        }
+        u_int64_t const pos = 1ULL << (64 - i - 1);
+        if (u & pos) {
+            printf("1");
         } else {
-            printf("0"); // if not, add a 0
+            printf("0");
         }
     }
-
     printf("\n");
 }
 
@@ -54,12 +53,13 @@ u_int64_t int_pow(u_int64_t base, u_int8_t exp)
 
 /**
  * @brief Compute the total number of possible k-mers for a given @p k.
- *
- * We here use an alphabet size of 4, for typical nucleotide k-mers over the alphabet `ACGT`.
- * For instance, with `k==6`, this yields `4*4*4*4*4*4 == 4096` possible k-mers of that size.
  */
 u_int64_t number_of_kmers(u_int8_t k)
 {
+    if (k == 0 || k >= 32) {
+        fprintf(stderr, "ERROR: Can only compute number of k-mers for k in [1,32).");
+        return 0;
+    }
     u_int64_t n = 1;
     for (u_int64_t i = 0; i < k; ++i) {
         n *= 4;
@@ -75,7 +75,7 @@ u_int64_t number_of_canonical_kmers(u_int8_t k)
     // We need distinct approaches for even and odd values, due to palindromes.
     // It might be easier to just have a hard coded table... but this way is more approachable.
     if (k == 0 || k > 32) {
-        fprintf(stderr, "ERROR: Can only compute minimal encoding size for k in [1,32].");
+        fprintf(stderr, "ERROR: Can only compute number of canonical k-mers for k in [1,32].");
     } else if (k % 2 == 0) {
         // Even numbers, need to add palindromes.
         // We use base 2 here, and instead of dividing the result by 2 in the end, we subtract 1
@@ -100,7 +100,8 @@ u_int64_t number_of_palindromes(u_int8_t k)
 {
     // Edge and special cases.
     if (k == 0 || k > 32) {
-        fprintf(stderr, "ERROR: Can only compute minimal encoding size for k in [1,32].");
+        fprintf(stderr, "ERROR: Can only compute number of palindromes for k in [1,32].");
+        return 0;
     } else if (k % 2 != 0) {
         // No palindromes for odd k
         return 0;
@@ -183,7 +184,7 @@ void initialize_bitmasks(Bitmasks* bm, int k)
     bm->offset = bm->max - 2 * k;
 
     // Precompute masks
-    bm->allones = powl(2, bm->max) - 1;
+    bm->allones = (((1ULL << 32) - 1) << 32) + ((1ULL << 32) - 1);
 
     // Initialize posmasks
     bm->posmasks[bm->max] = 1;
@@ -334,11 +335,16 @@ int process_string(char* s, int k, int* bins, int b)
     u_int64_t kmer = 0;
     u_int64_t rckmer = 0;
 
-    u_int64_t maxrank = powl(2, 2 * k - 1);
+    u_int64_t maxrank = int_pow(2, 2 * k - 1);
     if (k % 2 == 0) {
-        //even k -> need to consider palindromes
-        maxrank = powl(4, k) / 2;
-        // this is not the actual max rank. It is chosen such that the bucket sizes are a bit smaller -- such that palindromic k-mers (which do not appear in pairs) contribute as much as the other canonical k-mers
+        // Even k -> need to consider palindromes.
+        // This is not the actual max rank. It is chosen such that the bucket sizes are a bit smaller;
+        // such that palindromic k-mers (which do not appear in pairs) contribute as much as the
+        // other canonical k-mers
+        // This is the same as above, but we state it explicitly here so indicate that
+        // this can be adjusted if needed.
+        // Using a power of 2 here to express (4^k) / 2 without overflow for k==32.
+        maxrank = int_pow(2, 2 * k - 1);
     }
 
     Bitmasks bm;
@@ -370,8 +376,7 @@ int process_string(char* s, int k, int* bins, int b)
         }
 
         // clear unused bits
-        kmer &= ~bm.posmasks[bm.offset];
-        kmer &= ~bm.posmasks[bm.offset - 1];
+        kmer &= bm.zeromasks[bm.offset];
 
         // update reverse complement kmer
         rckmer = rckmer >> 2;
@@ -424,13 +429,13 @@ int process_string_std(char* s, int k, int* bins, int b)
 
     u_int64_t kmer = 0;
     u_int64_t rckmer = 0;
-    u_int64_t rem = 3;
+    u_int64_t rem = (k == 32 ? 0 : 3);
     rem <<= (2 * k);
     u_int64_t pos1 = 1;
     pos1 <<= (2 * k - 2);
     u_int64_t pos2 = 1;
     pos2 <<= (2 * k - 1);
-    u_int64_t maxrank = powl(2, 2 * k);
+    u_int64_t maxrank = int_pow(2, 2 * k);
     char warned = 0; //warn first time, an unsupported character is skipped
 
     for (int i = 0; i < strlen(s); i++) {
@@ -534,7 +539,7 @@ void test_all_small_kmers()
         u_int64_t num_palindromes = number_of_palindromes(k);
         initialize_bitmasks(&bm, k);
 
-        // Create an array to count kmers, initialized to 0
+        // Create an array to count canocical indices, initialized to 0
         u_int64_t* counts = (u_int64_t*)calloc(num_canon_kmers, sizeof(u_int64_t));
         if (counts == NULL) {
             perror("Failed to allocate memory for counts array");
@@ -618,7 +623,7 @@ void test_speed(int k)
 
     // Generate random 64-bit integers and store them in the array
     for (int i = 0; i < NUM_RANDOM_INTS; ++i) {
-        kmers[i] = random_64bit_int();
+        kmers[i] = random_64bit_int() >> (64 - 2 * k);
         rcs[i] = reverse_complement(kmers[i], k);
     }
 
@@ -632,7 +637,7 @@ void test_speed(int k)
         test_assert(encode(&bm, kmers[i], rcs[i]) == encode(&bm, rcs[i], kmers[i]));
     }
 
-    // Calculate the elapsed time in seconds
+    // Calculate the elapsed time in seconds, and the number of encodings per sec we achieved.
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
     unsigned long enc_per_sec = 2 * NUM_RANDOM_INTS / elapsed_time;
@@ -662,14 +667,14 @@ int main(int argc, char* argv[])
 
     // parse arguments
     if (argc < 2) {
-        fprintf(stderr, "arguments: fasta file, k (default 5, smaller 32), bin number (default 4)");
+        fprintf(stderr, "arguments: fasta file, k (default 5, <=32), bin number (default 4)");
         exit(1);
     }
 
     if (argc > 2) {
         k = atoi(argv[2]);
-        if (k > 31) {
-            fprintf(stderr, "ERROR: k must be smaller than 32.\n");
+        if (0 == k || k > 32) {
+            fprintf(stderr, "ERROR: k must be in [1,32].\n");
             exit(1);
         }
     }
