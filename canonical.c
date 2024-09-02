@@ -142,7 +142,7 @@ typedef struct {
     int k;
 
     u_int64_t allones;
-    int max;
+    int bitwidth;
     int offset;
 
     // Precomputed powers of 4
@@ -185,69 +185,88 @@ static const char reverse[16] = { 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1
 void initialize_bitmasks(Bitmasks* bm, int k)
 {
     bm->k = k;
-    bm->max = 8 * sizeof(u_int64_t);
-    bm->offset = bm->max - 2 * k;
+    bm->bitwidth = 8 * sizeof(u_int64_t);
+    bm->offset = bm->bitwidth - 2 * k;
 
     // Precompute constants for correcting the gap sizes in the index
-    bm->four_to_the_k_half_plus_one = int_pow( 4, k / 2 + 1 );
-    bm->twice_four_to_the_k_half = 2 * int_pow( 4, k / 2 );
+    bm->four_to_the_k_half_plus_one = int_pow(4, k / 2 + 1);
+    bm->twice_four_to_the_k_half = 2 * int_pow(4, k / 2);
 
     // Precompute masks
     bm->allones = (((1ULL << 32) - 1) << 32) + ((1ULL << 32) - 1);
 
     // Initialize posmasks
-    bm->posmasks[bm->max] = 1;
-    for (int i = bm->max - 1; i >= 0; i--) {
+    bm->posmasks[bm->bitwidth] = 1;
+    for (int i = bm->bitwidth - 1; i >= 0; i--) {
         bm->posmasks[i] = bm->posmasks[i + 1] << 1;
     }
 
     // Initialize onemasks
     // 1 .. 1 0 .. 0
-    bm->onemasks[bm->max] = bm->allones;
-    for (int i = bm->max - 1; i >= 0; i--) {
+    bm->onemasks[bm->bitwidth] = bm->allones;
+    for (int i = bm->bitwidth - 1; i >= 0; i--) {
         bm->onemasks[i] = (bm->onemasks[i + 1] << 1);
     }
 
     // Initialize zeromasks
     // 0 .. 0 1 .. 1
     bm->zeromasks[0] = bm->allones;
-    for (int i = 1; i <= bm->max; i++) {
+    for (int i = 1; i <= bm->bitwidth; i++) {
         bm->zeromasks[i] = bm->zeromasks[i - 1] >> 1;
     }
 
-    // Initialize remaindermasks
+    // After we have identified the specifying pair of characters, we need to extract
+    // the remainder, see encode_prime(). We here precompute a mask to do that.
+    // For instance, for k==7, the relevant entries are shaped like this:
+    //
+    //     remainder_mask_[2] == 00 .. 00 11 11 11 11 00
+    //     remainder_mask_[4] == 00 .. 00 00 11 11 00 00
+    //     remainder_mask_[6] == 00 .. 00 00 11 00 00 00
+    //
+    // We only ever need to access entries at even indices, as this is indexed per bit,
+    // and we use index access to the starting bit of the characters.
+    // Lastly, as explained in encode_prime(), we also might access entries
+    // beyond the given triangle of 1s, so we fill those with zeros here.
     bm->remaindermasks[0] = bm->allones;
-    for (int i = 1; i <= k; i++) {
-        bm->remaindermasks[i] = bm->zeromasks[i + bm->offset] & bm->onemasks[bm->max - i];
+    for (size_t i = 1; i <= k; i++) {
+        u_int64_t const zeromask = bm->allones >> (bm->bitwidth - 2 * k + i);
+        u_int64_t const onemask = bm->allones << i;
+        bm->remaindermasks[i] = zeromask & onemask;
+    }
+    for (size_t i = k + 1; i < 34; ++i) {
+        bm->remaindermasks[i] = 0;
     }
 }
 
-// compute encoding where only setting the bits accorodung to specifying case and subtracting gaps is missing
+// Compute encoding where only setting the bits according to specifying case and
+// subtracting gaps is missing, i.e., enc prime.
 u_int64_t encode_prime(Bitmasks const* bm, u_int64_t kmer, int offset, int l)
 {
     int k = bm->k;
 
-    // pick a precomputed mask consisting of l trailing 1s and 0s else
-    // do and AND of that mask and the original k-mer to get the new right part
-    u_int64_t right = kmer & bm->zeromasks[offset + 2 * k - l]; //l trailing ones
+    // This uses a mask of the form 0..01..1 (l trailing ones), to extract
+    // the relevant bits on the right, and invert (complement) them.
+    // u_int64_t const zeromask = (l == 0 ? 0 : bm->allones >> (bm->bitwidth - l));
+    u_int64_t const zeromask = bm->zeromasks[offset + 2 * k - l];
+    u_int64_t const right = (kmer & zeromask) ^ zeromask;
 
-    // complement/invert the right part by xor with zeromask
-    // /!\ TO SAVE COMPUTATION TIME, THIS STEP CAN BE SKIPPED. The resulting encodung will be different bbut still a coorect minimal encoding.
-    right = right ^ bm->zeromasks[offset + 2 * k - l];
+    // No remainder left? We could just return here, but in our tests, the introduced
+    // branching is more expensive than unconditionally executing the below bit operations,
+    // so we have deactivated this check here. Recommended to be tested on your hardware.
+    // if( l + 2 >= bm->k ) {
+    //     return right;
+    // }
 
-    // no remainder left?
-    if ((l + 2) >= k) {
-        return (right);
-    }
+    // Assert that the values are as expected.
+    // assert(l <= bm->k);
+    // assert(l % 2 == 0);
 
-    // pick a precomputed mask consisting of ones in the middle to get the remainder
-    u_int64_t remainder = kmer & bm->remaindermasks[l + 2];
-
-    // shift remainder two bits to the right
-    remainder = remainder >> 2;
-
-    // do OR of left and middle part
-    return (remainder | right);
+    // Use the remainder mask (consisting of ones in the middle) to extract the bits
+    // in between the specifying pair, then shift the remainder to the correct position.
+    // The mask contains 0 after index k, so that if we have l+2 >= k (no remainder),
+    // we just get a zero here, which does nothing to our result.
+    u_int64_t const remainder = (kmer & bm->remaindermasks[l + 2]) >> 2;
+    return right | remainder;
 }
 
 // compute enc_r_c
@@ -259,7 +278,7 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
 
     // get length of symmetric pre/suffix
     u_int64_t sym = kmer ^ rckmer;
-    int l = (sym == 0 ? bm->max : (__builtin_ctzll(sym) / 2 * 2));
+    int l = (sym == 0 ? bm->bitwidth : (__builtin_ctzll(sym) / 2 * 2));
 
     if (l < k - 1) {
         // not just single character in the middle
@@ -315,7 +334,7 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
         }
     } else {
         // palindrome -> nothing to do
-        assert(l >= k);
+        // assert(l >= k);
         l = k;
         kmerhash = encode_prime(bm, kmer, bm->offset, l);
     }
@@ -323,7 +342,7 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
     // subtract gaps
     // 2*(k//2-l-1) ones followed by k-2 zeros
     if (l <= k - 4) {
-        u_int64_t gaps = bm->zeromasks[bm->max - (2 * (k / 2 - l / 2 - 1))];
+        u_int64_t gaps = bm->zeromasks[bm->bitwidth - (2 * (k / 2 - l / 2 - 1))];
         gaps = gaps << (2 * ((k + 1) / 2) - 1);
         kmerhash -= gaps;
     }
