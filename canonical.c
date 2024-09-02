@@ -672,11 +672,11 @@ void test_speed(int k)
 int main(int argc, char* argv[])
 {
     // Run the test cases instead of the main processing.
-    test_all_small_kmers();
-    test_large_kmers();
-    test_speed(15);
-    test_speed(16);
-    return 0;
+    // test_all_small_kmers();
+    // test_large_kmers();
+    // test_speed(15);
+    // test_speed(16);
+    // return 0;
 
     // default values
     int k = 5; // k-mer length
