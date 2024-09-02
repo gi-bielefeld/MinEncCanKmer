@@ -143,15 +143,12 @@ typedef struct {
 
     u_int64_t allones;
     int bitwidth;
-    int offset;
 
     // Precomputed powers of 4
     u_int64_t four_to_the_k_half_plus_one;
     u_int64_t twice_four_to_the_k_half;
 
     // max + 1, since max = 8 * sizeof(u_int64_t)
-    u_int64_t posmasks[65];
-    u_int64_t onemasks[65];
     u_int64_t zeromasks[65];
     u_int64_t remaindermasks[34]; // max k + 2
 } Bitmasks;
@@ -188,7 +185,6 @@ void initialize_bitmasks(Bitmasks* bm, int k)
 {
     bm->k = k;
     bm->bitwidth = 8 * sizeof(u_int64_t);
-    bm->offset = bm->bitwidth - 2 * k;
 
     // Precompute constants for correcting the gap sizes in the index
     bm->four_to_the_k_half_plus_one = int_pow(4, k / 2 + 1);
@@ -196,19 +192,6 @@ void initialize_bitmasks(Bitmasks* bm, int k)
 
     // Precompute masks
     bm->allones = (((1ULL << 32) - 1) << 32) + ((1ULL << 32) - 1);
-
-    // Initialize posmasks
-    bm->posmasks[bm->bitwidth] = 1;
-    for (int i = bm->bitwidth - 1; i >= 0; i--) {
-        bm->posmasks[i] = bm->posmasks[i + 1] << 1;
-    }
-
-    // Initialize onemasks
-    // 1 .. 1 0 .. 0
-    bm->onemasks[bm->bitwidth] = bm->allones;
-    for (int i = bm->bitwidth - 1; i >= 0; i--) {
-        bm->onemasks[i] = (bm->onemasks[i + 1] << 1);
-    }
 
     // Initialize zeromasks
     // 0 .. 0 1 .. 1
@@ -242,14 +225,14 @@ void initialize_bitmasks(Bitmasks* bm, int k)
 
 // Compute encoding where only setting the bits according to specifying case and
 // subtracting gaps is missing, i.e., enc prime.
-u_int64_t encode_prime(Bitmasks const* bm, u_int64_t kmer, int offset, int l)
+u_int64_t encode_prime(Bitmasks const* bm, u_int64_t kmer, int l)
 {
     int k = bm->k;
 
     // This uses a mask of the form 0..01..1 (l trailing ones), to extract
     // the relevant bits on the right, and invert (complement) them.
     // u_int64_t const zeromask = (l == 0 ? 0 : bm->allones >> (bm->bitwidth - l));
-    u_int64_t const zeromask = bm->zeromasks[offset + 2 * k - l];
+    u_int64_t const zeromask = bm->zeromasks[bm->bitwidth - l];
     u_int64_t const right = (kmer & zeromask) ^ zeromask;
 
     // No remainder left? We could just return here, but in our tests, the introduced
@@ -296,9 +279,9 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
 
         // Check which case we need for the initial hash, based on the pattern we found.
         if (reverse[pattern]) {
-            kmercode = encode_prime(bm, rckmer, bm->offset, l);
+            kmercode = encode_prime(bm, rckmer, l);
         } else {
-            kmercode = encode_prime(bm, kmer, bm->offset, l);
+            kmercode = encode_prime(bm, kmer, l);
         }
 
         // Set positions l+1, l+2, l+3 and l+4 according to the specifying pair pattern,
@@ -327,7 +310,7 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
         // bit1 is shifted by 1 so that it is in the same positon as bit2.
         // The result of this XOR is a single bit indicating if we have C/G or A/T at the position,
         // and it is already in the correct position to be set in kmercode.
-        kmercode = encode_prime(bm, kmer, bm->offset, l);
+        kmercode = encode_prime(bm, kmer, l);
         u_int64_t const bit1 = (kmer & (1ULL << (k))) >> 1;
         u_int64_t const bit2 = (kmer & (1ULL << (k - 1)));
         kmercode |= bit1 ^ bit2;
@@ -339,7 +322,7 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
         // We use l = k here, as in a palindrome, l will overshoot due to the ctl call,
         // so we limit it here to the range that we are interested in.
         l = k;
-        kmercode = encode_prime(bm, kmer, bm->offset, l);
+        kmercode = encode_prime(bm, kmer, l);
     }
 
     // subtract gaps
@@ -369,6 +352,8 @@ int process_string(char* s, int k, int* bins, int b)
     char warned = 0; //warn first time, an unsupported character is skipped
     u_int64_t kmer = 0;
     u_int64_t rckmer = 0;
+    u_int64_t const pos1 = 1ull << (2 * k - 2);
+    u_int64_t const pos2 = 1ull << (2 * k - 1);
 
     u_int64_t maxrank = int_pow(2, 2 * k - 1);
     if (k % 2 == 0) {
@@ -411,7 +396,7 @@ int process_string(char* s, int k, int* bins, int b)
         }
 
         // clear unused bits
-        kmer &= bm.zeromasks[bm.offset];
+        kmer &= bm.zeromasks[bm.bitwidth - 2 * k];
 
         // update reverse complement kmer
         rckmer = rckmer >> 2;
@@ -419,16 +404,16 @@ int process_string(char* s, int k, int* bins, int b)
         case 'T':
             break;
         case 'G':
-            rckmer |= bm.posmasks[bm.offset + 2];
+            rckmer |= pos1;
             break;
         case 'C':
-            rckmer |= bm.posmasks[bm.offset + 1];
+            rckmer |= pos2;
             break;
         case 'A':
-            rckmer |= bm.posmasks[bm.offset + 2] | bm.posmasks[bm.offset + 1];
+            rckmer |= pos1 | pos2;
             break;
         default:
-            rckmer |= bm.posmasks[bm.offset + 2] | bm.posmasks[bm.offset + 1];
+            rckmer |= pos1 | pos2;
             break;
         }
 
@@ -464,13 +449,10 @@ int process_string_std(char* s, int k, int* bins, int b)
 
     u_int64_t kmer = 0;
     u_int64_t rckmer = 0;
-    u_int64_t rem = (k == 32 ? 0 : 3);
-    rem <<= (2 * k);
-    u_int64_t pos1 = 1;
-    pos1 <<= (2 * k - 2);
-    u_int64_t pos2 = 1;
-    pos2 <<= (2 * k - 1);
-    u_int64_t maxrank = int_pow(2, 2 * k);
+    u_int64_t const rem = (k == 32 ? 0ull : 3ull) << (2 * k);
+    u_int64_t const pos1 = 1ull << (2 * k - 2);
+    u_int64_t const pos2 = 1ull << (2 * k - 1);
+    u_int64_t const maxrank = int_pow(2, 2 * k);
     char warned = 0; //warn first time, an unsupported character is skipped
 
     for (int i = 0; i < strlen(s); i++) {
