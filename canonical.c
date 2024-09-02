@@ -145,6 +145,10 @@ typedef struct {
     int max;
     int offset;
 
+    // Precomputed powers of 4
+    u_int64_t four_to_the_k_half_plus_one;
+    u_int64_t twice_four_to_the_k_half;
+
     // max + 1, since max = 8 * sizeof(u_int64_t)
     u_int64_t posmasks[65];
     u_int64_t onemasks[65];
@@ -183,6 +187,10 @@ void initialize_bitmasks(Bitmasks* bm, int k)
     bm->k = k;
     bm->max = 8 * sizeof(u_int64_t);
     bm->offset = bm->max - 2 * k;
+
+    // Precompute constants for correcting the gap sizes in the index
+    bm->four_to_the_k_half_plus_one = int_pow( 4, k / 2 + 1 );
+    bm->twice_four_to_the_k_half = 2 * int_pow( 4, k / 2 );
 
     // Precompute masks
     bm->allones = (((1ULL << 32) - 1) << 32) + ((1ULL << 32) - 1);
@@ -321,8 +329,8 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
     }
 
     // subtract gap in code due to specifying middle position
-    if (k % 2 == 1 && kmerhash >= pow(4, (k / 2 + 1))) {
-        kmerhash -= 2 * pow(4, k / 2);
+    if (k % 2 == 1 && kmerhash >= bm->four_to_the_k_half_plus_one) {
+        kmerhash -= bm->twice_four_to_the_k_half;
     }
 
     return kmerhash;
