@@ -156,30 +156,32 @@ typedef struct {
     u_int64_t remaindermasks[34]; // max k + 2
 } Bitmasks;
 
-// Fixed bitmasks to detect the pattern of a specifying pair.
-// Because this is C, it is a bit tricky to make them constant and in the right scope,
-// so for simplicity, we just make them global.
-// R:
-// * 0 A..A -> 0110
-// * 1 A..C -> 0101
-// * 2 A..G -> 0100
-// # 3 palindrome A..T
-// * 4 C..A -> 1000
-// * 5 C..C -> 0111
-// # 6 palindrome C..G
-// # 7 C..T -> A..G -> 0100
-// * 8 G..A -> 1001
-// # 9 palindrome G..C
-// # 10 G..G -> C..C -> 0111
-// # 11 G..T -> A..C -> 0101
-// # 12 palindrome T..A
-// # 13 T..C -> G..A -> 1001
-// # 14 T..G -> C..A -> 1000
-// # 15 T..T -> A..A -> 0110
-static const char replace1[16] = { 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0 };
-static const char replace2[16] = { 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1 };
-static const char replace3[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-static const char replace4[16] = { 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0 };
+// Replace markers for the function R for each type of specifying pair.
+// We code those as a lookup table, where each entry is a single word
+// containing the four bits of the following list in their LSBs.
+// We store those as the type of our underlying data, so that we can
+// directly shift those values to the position where they are needed.
+// *  0 A..A            -> 0110
+// *  1 A..C            -> 0101
+// *  2 A..G            -> 0100
+// #  3 A..T palindrome -> 0000
+// *  4 C..A            -> 1000
+// *  5 C..C            -> 0111
+// #  6 C..G palindrome -> 0000
+// #  7 C..T -> A..G    -> 0100
+// *  8 G..A            -> 1001
+// #  9 G..C palindrome -> 0000
+// # 10 G..G -> C..C    -> 0111
+// # 11 G..T -> A..C    -> 0101
+// # 12 T..A palindrome -> 0000
+// # 13 T..C -> G..A    -> 1001
+// # 14 T..G -> C..A    -> 1000
+// # 15 T..T -> A..A    -> 0110
+static const u_int64_t replace[16] = {
+    0x06, 0x05, 0x04, 0x00, 0x08, 0x07, 0x00, 0x04, 0x09, 0x00, 0x07, 0x05, 0x00, 0x09, 0x08, 0x06
+};
+
+// Markers to check if we need to encode the forward or the reverse complement.
 static const char reverse[16] = { 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1 };
 
 void initialize_bitmasks(Bitmasks* bm, int k)
@@ -281,43 +283,30 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
     int l = (sym == 0 ? bm->bitwidth : (__builtin_ctzll(sym) / 2 * 2));
 
     if (l < k - 1) {
-        // not just single character in the middle
+        // Not just single character in the middle, i.e., we have a specifying pair.
 
-        // get the first two asymmetric characters, i.e. 2x2 bits
-        char pattern = 0;
-        if (kmer & bm->posmasks[bm->offset + l + 1]) {
-            pattern += 8;
-        }
-        if (kmer & bm->posmasks[bm->offset + l + 2]) {
-            pattern += 4;
-        }
-        if (kmer & bm->posmasks[bm->offset + 2 * k - l - 1]) {
-            pattern += 2;
-        }
-        if (kmer & bm->posmasks[bm->offset + 2 * k - l]) {
-            pattern += 1;
-        }
+        // There are 16 possible combinations of two characters from ACGT.
+        // We here extract the first two asymmetric characters (the specifying pair, i.e. 2x2 bits)
+        // to build a pattern for a lookup of which combination we have in the kmer.
+        // This is done by shifting the relevant bits of the pair to the LSBs of the pattern.
+        unsigned char pattern = 0;
+        pattern |= (kmer >> (2 * k - l - 4)) & 0x0C;
+        pattern |= (kmer >> l) & 0x03;
+        // assert(pattern < 16);
 
+        // Check which case we need for the initial hash, based on the pattern we found.
         if (reverse[pattern]) {
             kmercode = encode_prime(bm, rckmer, bm->offset, l);
         } else {
             kmercode = encode_prime(bm, kmer, bm->offset, l);
         }
 
-        // set positions l+1, l+2, l+3 and l+4 according to *-pair-encoding
-        if (replace1[pattern]) {
-            kmercode |= bm->posmasks[bm->offset + l + 1];
-        }
-        if (replace2[pattern]) {
-            kmercode |= bm->posmasks[bm->offset + l + 2];
-        }
-        if (replace3[pattern]) {
-            kmercode |= bm->posmasks[bm->offset + l + 3];
-        }
-        if (replace4[pattern]) {
-            kmercode |= bm->posmasks[bm->offset + l + 4];
-        }
-
+        // Set positions l+1, l+2, l+3 and l+4 according to the specifying pair pattern,
+        // which is called R in the manuscript.
+        // Similar to above, we can avoid any branching here by directly shifting
+        // the replace mask bits to the needed positions. If the replace mask is 0 for the
+        // given pattern, we shift a zero, which just does nothing.
+        kmercode |= (replace[pattern] << (2 * k - l - 4));
     } else if (l == k - 1) {
         // Single character in the middle. Can only occurr in odd k.
         // assert(k % 2 == 1);
