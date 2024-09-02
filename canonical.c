@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdbool.h>
@@ -250,9 +251,10 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
 
     // get length of symmetric pre/suffix
     u_int64_t sym = kmer ^ rckmer;
-    int l = __builtin_ctzll(sym) / 2 * 2;
+    int l = (sym == 0 ? bm->max : (__builtin_ctzll(sym) / 2 * 2));
 
-    if (l < k - 1) { // not just single character in the middle
+    if (l < k - 1) {
+        // not just single character in the middle
 
         // get the first two asymmetric characters, i.e. 2x2 bits
         char pattern = 0;
@@ -289,10 +291,8 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
             kmerhash |= bm->posmasks[bm->offset + l + 4];
         }
 
-    } else if (l >= k) { // palindrome -> nothing to do
-        l = k;
-        kmerhash = encode_prime(bm, kmer, bm->offset, l);
-    } else { // single character in the middle
+    } else if (l == k - 1) {
+        // single character in the middle
         kmerhash = encode_prime(bm, kmer, bm->offset, l);
         // set the bits accordingly
         // A=00 -> 0
@@ -305,6 +305,11 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
         if (!(kmer & bm->posmasks[bm->offset + l + 1]) && (kmer & bm->posmasks[bm->offset + l + 2])) {
             kmerhash |= bm->posmasks[bm->offset + l + 2];
         }
+    } else {
+        // palindrome -> nothing to do
+        assert(l >= k);
+        l = k;
+        kmerhash = encode_prime(bm, kmer, bm->offset, l);
     }
 
     // subtract gaps
