@@ -273,7 +273,7 @@ u_int64_t encode_prime(Bitmasks const* bm, u_int64_t kmer, int offset, int l)
 u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
 {
     // hash
-    u_int64_t kmerhash;
+    u_int64_t kmercode;
     int k = bm->k;
 
     // get length of symmetric pre/suffix
@@ -299,44 +299,58 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
         }
 
         if (reverse[pattern]) {
-            kmerhash = encode_prime(bm, rckmer, bm->offset, l);
+            kmercode = encode_prime(bm, rckmer, bm->offset, l);
         } else {
-            kmerhash = encode_prime(bm, kmer, bm->offset, l);
+            kmercode = encode_prime(bm, kmer, bm->offset, l);
         }
 
         // set positions l+1, l+2, l+3 and l+4 according to *-pair-encoding
         if (replace1[pattern]) {
-            kmerhash |= bm->posmasks[bm->offset + l + 1];
+            kmercode |= bm->posmasks[bm->offset + l + 1];
         }
         if (replace2[pattern]) {
-            kmerhash |= bm->posmasks[bm->offset + l + 2];
+            kmercode |= bm->posmasks[bm->offset + l + 2];
         }
         if (replace3[pattern]) {
-            kmerhash |= bm->posmasks[bm->offset + l + 3];
+            kmercode |= bm->posmasks[bm->offset + l + 3];
         }
         if (replace4[pattern]) {
-            kmerhash |= bm->posmasks[bm->offset + l + 4];
+            kmercode |= bm->posmasks[bm->offset + l + 4];
         }
 
     } else if (l == k - 1) {
-        // single character in the middle
-        kmerhash = encode_prime(bm, kmer, bm->offset, l);
-        // set the bits accordingly
-        // A=00 -> 0
-        // C=01 -> 1
-        // G=10 -> 1
-        // T=11 -> 0
-        if ((kmer & bm->posmasks[bm->offset + l + 1]) && !(kmer & bm->posmasks[bm->offset + l + 2])) {
-            kmerhash |= bm->posmasks[bm->offset + l + 2];
-        } //rc
-        if (!(kmer & bm->posmasks[bm->offset + l + 1]) && (kmer & bm->posmasks[bm->offset + l + 2])) {
-            kmerhash |= bm->posmasks[bm->offset + l + 2];
-        }
+        // Single character in the middle. Can only occurr in odd k.
+        // assert(k % 2 == 1);
+
+        // We are interested in the bits at the central character,
+        // which (given that we have l == k - 1 here) are located at:
+        //     2*k - l - 1 == k
+        //     2*k - l - 2 == k - 1
+        // Use these bits to encode A/T -> 0 and C/G -> 1:
+        //     A = 00 -> 0
+        //     C = 01 -> 1
+        //     G = 10 -> 1
+        //     T = 11 -> 0
+        // Depending on the combination of those two bits, we want to set a bit in kmercode.
+        // In particular, we want to set the same bit as the second of the two above positions,
+        // but only if both bit positions are different (C or G). For this, we first obtain
+        // both bits of the kmer, and use XOR to see if they are different. To this end,
+        // bit1 is shifted by 1 so that it is in the same positon as bit2.
+        // The result of this XOR is a single bit indicating if we have C/G or A/T at the position,
+        // and it is already in the correct position to be set in kmercode.
+        kmercode = encode_prime(bm, kmer, bm->offset, l);
+        u_int64_t const bit1 = (kmer & (1ULL << (k))) >> 1;
+        u_int64_t const bit2 = (kmer & (1ULL << (k - 1)));
+        kmercode |= bit1 ^ bit2;
     } else {
-        // palindrome -> nothing to do
+        // Palindrome -> nothing to do. Can only occurr in even k.
+        // assert(k % 2 == 0);
         // assert(l >= k);
+
+        // We use l = k here, as in a palindrome, l will overshoot due to the ctl call,
+        // so we limit it here to the range that we are interested in.
         l = k;
-        kmerhash = encode_prime(bm, kmer, bm->offset, l);
+        kmercode = encode_prime(bm, kmer, bm->offset, l);
     }
 
     // subtract gaps
@@ -344,15 +358,15 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
     if (l <= k - 4) {
         u_int64_t gaps = bm->zeromasks[bm->bitwidth - (2 * (k / 2 - l / 2 - 1))];
         gaps = gaps << (2 * ((k + 1) / 2) - 1);
-        kmerhash -= gaps;
+        kmercode -= gaps;
     }
 
     // subtract gap in code due to specifying middle position
-    if (k % 2 == 1 && kmerhash >= bm->four_to_the_k_half_plus_one) {
-        kmerhash -= bm->twice_four_to_the_k_half;
+    if (k % 2 == 1 && kmercode >= bm->four_to_the_k_half_plus_one) {
+        kmercode -= bm->twice_four_to_the_k_half;
     }
 
-    return kmerhash;
+    return kmercode;
 }
 
 // =================================================================================================
@@ -435,10 +449,10 @@ int process_string(char* s, int k, int* bins, int b)
         }
 
         // hash
-        u_int64_t kmerhash = encode(&bm, kmer, rckmer);
+        u_int64_t kmercode = encode(&bm, kmer, rckmer);
 
         // assign to bin
-        u_int64_t p = b * kmerhash / maxrank;
+        u_int64_t p = b * kmercode / maxrank;
 
         if (p == b) {
             // palindromes comes not in pairs like the other canonical k-mers. In order to ensure a equal distribution, bucket sizes are chosen as if there were only half as many palindromes possible. This results in ranks that would correspond to a max+1st bin. These k-mers are assigned to bin 0 where the palindromes are "missing".
