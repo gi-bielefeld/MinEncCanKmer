@@ -147,6 +147,7 @@ typedef struct {
     // Precomputed powers of 4
     u_int64_t four_to_the_k_half_plus_one;
     u_int64_t twice_four_to_the_k_half;
+    u_int64_t gap_shift;
 
     // max + 1, since max = 8 * sizeof(u_int64_t)
     u_int64_t zeromasks[65];
@@ -189,6 +190,7 @@ void initialize_bitmasks(Bitmasks* bm, int k)
     // Precompute constants for correcting the gap sizes in the index
     bm->four_to_the_k_half_plus_one = int_pow(4, k / 2 + 1);
     bm->twice_four_to_the_k_half = 2 * int_pow(4, k / 2);
+    bm->gap_shift = (2 * ((k + 1) / 2) - 1);
 
     // Precompute masks
     bm->allones = (((1ULL << 32) - 1) << 32) + ((1ULL << 32) - 1);
@@ -261,11 +263,22 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
     u_int64_t kmercode;
     int k = bm->k;
 
-    // get length of symmetric pre/suffix
+    // Get the length of the symmetric prefix/suffix, in num of characters, i.e., 2x num of bits.
+    // Then, l is the bit index of the char that is the specifying case for the k-mer.
+    // Calling ctz(0) is undefined, which is the case for palindromes; we catch this
+    // below by checking for sym==0, as this is faster than an additional check here.
     u_int64_t sym = kmer ^ rckmer;
-    int l = (sym == 0 ? bm->bitwidth : (__builtin_ctzll(sym) / 2 * 2));
+    int l = __builtin_ctzll(sym) / 2 * 2;
 
-    if (l < k - 1) {
+    if (sym == 0) {
+        // Palindrome -> nothing to do. Can only occurr in even k.
+        // assert(k % 2 == 0);
+
+        // We use l = k here, as in a palindrome, l will overshoot due to the ctl call,
+        // so we limit it here to the range that we are interested in.
+        l = k;
+        kmercode = encode_prime(bm, kmer, l);
+    } else if (l < k - 1) {
         // Not just single character in the middle, i.e., we have a specifying pair.
 
         // There are 16 possible combinations of two characters from ACGT.
@@ -315,22 +328,16 @@ u_int64_t encode(Bitmasks const* bm, u_int64_t kmer, u_int64_t rckmer)
         u_int64_t const bit2 = (kmer & (1ULL << (k - 1)));
         kmercode |= bit1 ^ bit2;
     } else {
-        // Palindrome -> nothing to do. Can only occurr in even k.
-        // assert(k % 2 == 0);
-        // assert(l >= k);
-
-        // We use l = k here, as in a palindrome, l will overshoot due to the ctl call,
-        // so we limit it here to the range that we are interested in.
-        l = k;
-        kmercode = encode_prime(bm, kmer, l);
+        // This branch is taken only if l >= k, which however implies that the kmer
+        // is a palindrome, which is already checked as the first branch.
+        assert(false);
     }
 
     // subtract gaps
     // 2*(k//2-l-1) ones followed by k-2 zeros
     if (l <= k - 4) {
-        u_int64_t gaps = bm->zeromasks[bm->bitwidth - (2 * (k / 2 - l / 2 - 1))];
-        gaps = gaps << (2 * ((k + 1) / 2) - 1);
-        kmercode -= gaps;
+        u_int64_t gaps = bm->zeromasks[bm->bitwidth - (k / 2 * 2 - l - 2)];
+        kmercode -= (gaps << bm->gap_shift);
     }
 
     // subtract gap in code due to specifying middle position
